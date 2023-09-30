@@ -47,26 +47,21 @@ void MQTT::dumpPacket(byte *ppacket, int length) {
 
 void MQTT::receiveTask(void *pdata) {
   MQTT *pmqtt = (MQTT *)pdata;
-  int count, remaining, processed;
-  byte *pbuffer, *pstart;
+  int count, processed;
+  byte *pbuffer;
   Response *presponse;
 
   while (1) {
     count = pmqtt->wifiClient.available();
-    if (count > 0) {
-      // TODO Receive all available data but this might make more than one Response.
+    if (count > 1) {
       // pmqtt->log("%d bytes available\n", count);
       pbuffer = new byte[count];
       pmqtt->wifiClient.read(pbuffer, count);
-      pstart = pbuffer;
       processed = 0;
       while (processed < count) {
-        remaining = pstart[1];  // TODO Use logic per spec to calculate remaining length.
-        // pmqtt->dumpPacket(pstart, remaining + 2);
-        presponse = new Response(pstart, remaining + 2);
+        presponse = new Response(pbuffer + processed);
         xQueueSend(pmqtt->receiveQueue, &presponse, 0);
-        processed += remaining + 2;
-        pstart += remaining + 2;
+        processed += presponse->length;
       }
       delete[] pbuffer;
     }

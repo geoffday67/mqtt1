@@ -5,10 +5,11 @@ Response::Response() {
   pdata = 0;
 }
 
-Response::Response(byte *pbuffer, int length) {
+Response::Response(byte *pbuffer) {
+  int remaining = pbuffer[1];  // TODO Use logic per spec to calculate remaining length.
+  length = remaining + 2;
   pdata = new byte[length];
   memcpy(pdata, pbuffer, length);
-  this->length = length;
 }
 
 Response::~Response() {

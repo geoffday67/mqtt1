@@ -23,12 +23,12 @@ enum PacketType {
 class Response {
  protected:
   byte *pdata;
-  int length;
 
  public:
   Response();
-  Response(byte *, int);
+  Response(byte *);
   ~Response();
+  int length;
   PacketType getType();
 };
 
