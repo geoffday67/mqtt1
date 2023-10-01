@@ -2,11 +2,15 @@
 
 #include <WiFiClient.h>
 
+typedef void(MqttCallback)(byte *pTopic, int topicLength, byte *pPayload, int payloadLength);
+
 class MQTT {
  private:
   bool debug;
   WiFiClient wifiClient;
   SemaphoreHandle_t brokerMutex;
+  MqttCallback *pCallback;
+
   bool sendPacket(byte *, int);
   void log(const char *pformat, ...);
   void dumpPacket(byte *ppacket, int length);
@@ -44,4 +48,5 @@ class MQTT {
   bool publish(char *ptopic, char *pmessage, bool retain = false);
   bool subscribe(char *ptopic);
   bool disconnect();
+  void setCallback(MqttCallback *pcallback) { pCallback = pcallback; }
 };

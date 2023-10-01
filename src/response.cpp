@@ -1,70 +1,72 @@
 #include "response.h"
 
 Response::Response() {
-  length = 0;
-  pdata = 0;
+  pRaw = 0;
 }
 
 Response::Response(byte *pbuffer) {
-  int remaining = pbuffer[1];  // TODO Use logic per spec to calculate remaining length.
-  length = remaining + 2;
-  pdata = new byte[length];
-  memcpy(pdata, pbuffer, length);
+  int index, multiplier;
+  byte b;
+
+  // Calculate remaining length per the algorithm in the spec (assumes the raw data is at least 2 bytes long).
+  index = 1;
+  remainingLength = 0;
+  multiplier = 1;
+  while (1) {
+    b = pbuffer[index];
+    remainingLength += (b & 0x7F) * multiplier;
+    if (!(b & 0x80)) {
+      break;
+    }
+    multiplier *= 128;
+    index++;
+  }
+
+  // Allocate space for the raw byte data and copy it in.
+  totalLength = remainingLength + index + 1;
+  pRaw = new byte[totalLength];
+  memcpy(pRaw, pbuffer, totalLength);
+
+  // The fixed header is always at the start of the data.
+  pFixedHeader = pRaw;
+
+  // The variable header follows the fixed header.
+  pVariableHeader = pRaw + index + 1;
 }
 
 Response::~Response() {
-  delete[] pdata;
+  delete[] pRaw;
 }
 
 PacketType Response::getType() {
-  if (length > 0) {
-    return static_cast<PacketType>((pdata[0] & 0xF0) >> 4);
-  } else {
-    return PacketType::RESERVED;
-  }
+    return static_cast<PacketType>((pFixedHeader[0] & 0xF0) >> 4);
 }
 
 int Publish::getQoS() {
-  if (length < 1) {
-    return 0;
-  }
-
-  return (pdata[0] & 0x06) >> 1;
+  return (pFixedHeader[0] & 0x06) >> 1;
 }
 
-int Publish::getMessage(byte **ppmessage) {
-  if (length < 4) {
-    *ppmessage = 0;
-    return 0;
-  }
-
-  int topic_length = (pdata[2] * 256) + pdata[3];
-  *ppmessage = pdata + topic_length + 6;
-  int remaining_length = pdata[1];
-  return remaining_length - (topic_length + 4);
+int Publish::getTopic(byte **pptopic) {
+  int topic_length = (pVariableHeader[0] * 256) + pVariableHeader[1];
+  *pptopic = pVariableHeader + 2;
+  return topic_length;
 }
 
 int Publish::getId() {
-  if (length < 4) {
-    return 0;
-  }
+  int topic_length = (pVariableHeader[0] * 256) + pVariableHeader[1];
+  return (pVariableHeader[topic_length + 2] * 256) + pVariableHeader[topic_length + 3];
+}
 
-  int topic_length = (pdata[2] * 256) + pdata[3];
-  return (pdata[topic_length + 4] * 256) + pdata[topic_length + 5];
+int Publish::getPayload(byte **pppayload) {
+  int topic_length = (pVariableHeader[0] * 256) + pVariableHeader[1];
+  *pppayload = pVariableHeader + topic_length + 4;
+  return remainingLength - (topic_length + 4);
 }
 
 int PubAck::getId() {
-  if (length < 4) {
-    return 0;
-  }
-
-  return (pdata[2] * 256) + pdata[3];
+  return (pVariableHeader[0] * 256) + pVariableHeader[1];
 }
 
 int SubAck::getId() {
-  if (length < 4) {
-    return 0;
-  }
-
-  return (pdata[2] * 256) + pdata[3];
+  return (pVariableHeader[0] * 256) + pVariableHeader[1];
 }

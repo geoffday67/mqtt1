@@ -22,21 +22,23 @@ enum PacketType {
 
 class Response {
  protected:
-  byte *pdata;
+  byte *pRaw, *pFixedHeader, *pVariableHeader;
+  int remainingLength;
 
  public:
   Response();
   Response(byte *);
   ~Response();
-  int length;
   PacketType getType();
+  int totalLength;
 };
 
 class Publish : public Response {
  public:
-  int getId();
   int getQoS();
-  int getMessage(byte **);
+  int getTopic(byte **);
+  int getId();
+  int getPayload(byte **);
 };
 
 class PubAck : public Response {

@@ -13,6 +13,7 @@ MQTT::MQTT(WiFiClient &wifiClient) {
   brokerMutex = xSemaphoreCreateMutex();
   receiveHandle = 0;
   receiveQueue = 0;
+  pCallback = 0;
 }
 
 void MQTT::enableDebug(bool enable) {
@@ -60,8 +61,9 @@ void MQTT::receiveTask(void *pdata) {
       processed = 0;
       while (processed < count) {
         presponse = new Response(pbuffer + processed);
+        // pmqtt->log("Response created with length %d\n", presponse->length);
         xQueueSend(pmqtt->receiveQueue, &presponse, 0);
-        processed += presponse->length;
+        processed += presponse->totalLength;
       }
       delete[] pbuffer;
     }
@@ -72,9 +74,8 @@ void MQTT::subscriptionTask(void *pdata) {
   MQTT *pmqtt = (MQTT *)pdata;
   Response *presponse;
   Publish *ppublish;
-  char message[64];
-  byte *psource;
-  int length, id;
+  byte *ptopic, *ppayload;
+  int topic_length, payload_length, id;
 
   while (1) {
     // Wait forever for a packet to appear.
@@ -87,12 +88,15 @@ void MQTT::subscriptionTask(void *pdata) {
     // Is it for us?
     if (presponse->getType() == PacketType::PUBLISH) {
       ppublish = static_cast<Publish *>(presponse);
-      length = ppublish->getMessage(&psource);
+      payload_length = ppublish->getPayload(&ppayload);
+      topic_length = ppublish->getTopic(&ptopic);
       // TODO Check message length
-      memcpy(message, psource, length);
-      message[length] = 0;
+      // TODO Call back with topic and message.
+      if (pmqtt->pCallback) {
+        (*pmqtt->pCallback)(ptopic, topic_length, ppayload, payload_length);
+      }
       id = ppublish->getId();
-      pmqtt->log("Received message [%s] with ID 0x%04X\n", message, id);
+      pmqtt->log("Received message with ID 0x%04X\n", id);
       delete presponse;
       pmqtt->sendPUBACK(id);
     } else {
@@ -364,6 +368,7 @@ void MQTT::keepAliveTask(void *pdata) {
 
   while (1) {
     if (!pmqtt->sendPING() || !pmqtt->awaitPINGRESP()) {
+      // TODO Replace restart with callback.
       ESP.restart();
     }
 
@@ -487,6 +492,7 @@ bool MQTT::connect(char *pserver, int port, char *pclient, int keepalive) {
   result = true;
 
 exit:
+  // TODO Clean up new queue on error; move WiFi connect earlier.
   return result;
 }
 
@@ -571,19 +577,3 @@ bool MQTT::disconnect() {
 exit:
   return result;
 }
-
-/*
-Because keep alive pings are sent from a separate task it's possible to get the responses out of order.
-Option 1, more flexible receiver:
-  Receive packet using dynamic decoding of received data type and length.
-  Communicate ack to sender (by task notification?).
-Option 2, synchronise communication with broker, e.g. by mutex.
-
-Option 1 is better as we have no control over data arriving via subscriptions, i.e. a packet could
-arrive with published subscription data in between sending a ping request and getting its response, thus
-confusing the ping response checker.
-
-Single point of receipt of network data in a task. Pass the response to waiting tasks in turn (those that have sent a packet).
-The first to consume the response stops the round-robin process. "Response" includes PUBLISH packets as a result of subscriptions;
-the subscription task processes those and sends the acknowledgement. Need a list of tasks that might be interested in a response.
-*/
