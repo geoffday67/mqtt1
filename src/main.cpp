@@ -77,7 +77,7 @@ bool connectMQTT() {
   pMQTT = new MQTT(wifi);
   pMQTT->enableDebug(true);
 
-  if (!pMQTT->connect(MQTT_SERVER, MQTT_PORT, MQTT_CLIENT, 10)) {
+  if (!pMQTT->connect(MQTT_SERVER, MQTT_PORT, MQTT_CLIENT, 60)) {
     Serial.println("Error connecting MQTT");
     goto exit;
   }
@@ -88,42 +88,67 @@ exit:
   return result;
 }
 
-void handleMQTT(byte *pTopic, int topicLength, byte *pPayload, int payloadLength) {
+void mqttError(MqttError error) {
+  ESP.restart();
+}
+
+void mqttMessage(byte *pTopic, int topicLength, byte *pPayload, int payloadLength) {
   char topic[128], message[128];
 
   memcpy(topic, pTopic, topicLength);
   topic[topicLength] = 0;
   memcpy(message, pPayload, payloadLength);
   message[payloadLength] = 0;
-  Serial.printf("Message recived on %s: %s\n", topic, message);
+  Serial.printf("Message received on %s: %s\n", topic, message);
+
+  if (!strcmp(message, "on")) {
+    digitalWrite(LED_BUILTIN, HIGH);
+  } else if (!strcmp(message, "off")) {
+    digitalWrite(LED_BUILTIN, LOW);
+  }
 }
 
 void setup() {
+  unsigned long start;
+
   Serial.begin(115200);
   Serial.println();
   Serial.println("Starting");
 
+  pinMode(LED_BUILTIN, OUTPUT);
+
   connectWiFi();
 
-  /*Serial.print("Refreshing NTP time ... ");
-  sntp_setservername(0, "pool.ntp.org");
+  Serial.print("Refreshing NTP time ... ");
+  sntp_setservername(0, "time.google.com");
   sntp_set_sync_mode(SNTP_SYNC_MODE_IMMED);
   sntp_init();
-  while (sntp_get_sync_status() != SNTP_SYNC_STATUS_COMPLETED) {
+
+  start = millis();
+  while (1) {
+    if (sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED) {
+      time_t now, local;
+      time(&now);
+      local = UK.toLocal(now);
+      tm *ptm = localtime(&local);
+      sprintf(timestamp, "%02d/%02d/%04d %02d:%02d", ptm->tm_mday, ptm->tm_mon + 1, ptm->tm_year + 1900, ptm->tm_hour, ptm->tm_min);
+      Serial.printf("got %s\n", timestamp);
+      break;
+    }
+
+    if (millis() - start > 5000) {
+      strcpy(timestamp, "unknown");
+      Serial.println("Timed out getting time");
+      break;
+    }
     vTaskDelay(1000);
   }
-  time_t now, local;
-  time(&now);
-  local = UK.toLocal(now);
-  tm *ptm = localtime(&local);
-  sprintf(timestamp, "%02d/%02d/%04d %02d:%02d", ptm->tm_mday, ptm->tm_mon + 1, ptm->tm_year + 1900, ptm->tm_hour, ptm->tm_min);
-  Serial.printf("got %s\n", timestamp);*/
-  strcpy(timestamp, "unknown");
 
-  connectMQTT();
-  pMQTT->setCallback(handleMQTT);
-  pMQTT->publish("mqtt-test/restart", timestamp, true);
-  pMQTT->subscribe("mqtt-test/subscribe");
+  if (!connectMQTT()) ESP.restart();
+  pMQTT->setMessageCallback(mqttMessage);
+  pMQTT->setErrorCallback(mqttError);
+  if (!pMQTT->publish("mqtt-test/restart", timestamp, true)) ESP.restart();
+  if (!pMQTT->subscribe("mqtt-test/subscribe")) ESP.restart();
 }
 
 void loop() {

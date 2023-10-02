@@ -13,7 +13,8 @@ MQTT::MQTT(WiFiClient &wifiClient) {
   brokerMutex = xSemaphoreCreateMutex();
   receiveHandle = 0;
   receiveQueue = 0;
-  pCallback = 0;
+  pMessageCallback = 0;
+  pErrorCallback = 0;
 }
 
 void MQTT::enableDebug(bool enable) {
@@ -90,10 +91,8 @@ void MQTT::subscriptionTask(void *pdata) {
       ppublish = static_cast<Publish *>(presponse);
       payload_length = ppublish->getPayload(&ppayload);
       topic_length = ppublish->getTopic(&ptopic);
-      // TODO Check message length
-      // TODO Call back with topic and message.
-      if (pmqtt->pCallback) {
-        (*pmqtt->pCallback)(ptopic, topic_length, ppayload, payload_length);
+      if (pmqtt->pMessageCallback) {
+        (*pmqtt->pMessageCallback)(ptopic, topic_length, ppayload, payload_length);
       }
       id = ppublish->getId();
       pmqtt->log("Received message with ID 0x%04X\n", id);
@@ -368,8 +367,9 @@ void MQTT::keepAliveTask(void *pdata) {
 
   while (1) {
     if (!pmqtt->sendPING() || !pmqtt->awaitPINGRESP()) {
-      // TODO Replace restart with callback.
-      ESP.restart();
+      if (pmqtt->pErrorCallback) {
+        (*pmqtt->pErrorCallback)(MqttError::NO_PING_RESPONSE);
+      }
     }
 
     vTaskDelay(pmqtt->keepAlive * 1000);
@@ -452,6 +452,12 @@ bool MQTT::connect(char *pserver, int port, char *pclient, int keepalive) {
   int tries;
   bool result = false;
 
+  if (!wifiClient.connect(pserver, port)) {
+    log("Error connecting to broker\n");
+    goto exit;
+  }
+  log("Connected to broker at %s\n", wifiClient.remoteIP().toString().c_str());
+
   if (receiveQueue) {
     vQueueDelete(receiveQueue);
   }
@@ -461,16 +467,9 @@ bool MQTT::connect(char *pserver, int port, char *pclient, int keepalive) {
   }
   xTaskCreatePinnedToCore(receiveTask, "MQTT receive", 8192, this, 1, &receiveHandle, 1);
 
-  if (!wifiClient.connect(pserver, port)) {
-    log("Error connecting to broker\n");
-    goto exit;
-  }
-  log("Connected to broker at %s\n", wifiClient.remoteIP().toString().c_str());
-
   tries = 0;
   while (true) {
     if (sendCONNECT(pclient, keepalive * 2) && awaitCONNACK()) {
-      // if (atomicCONNECT(pclient, keepalive * 2)) {
       break;
     }
     if (++tries == 3) {
@@ -487,12 +486,15 @@ bool MQTT::connect(char *pserver, int port, char *pclient, int keepalive) {
   if (subscriptionHandle) {
     vTaskDelete(subscriptionHandle);
   }
-  xTaskCreatePinnedToCore(subscriptionTask, "MQTT subscrption", 8192, this, 1, &subscriptionHandle, 1);
+  xTaskCreatePinnedToCore(subscriptionTask, "MQTT subscription", 8192, this, 1, &subscriptionHandle, 1);
 
   result = true;
 
 exit:
-  // TODO Clean up new queue on error; move WiFi connect earlier.
+  if (!result) {
+    cleanUp();
+  }
+
   return result;
 }
 
@@ -536,20 +538,7 @@ exit:
   return result;
 }
 
-bool MQTT::disconnect() {
-  int tries;
-  bool result = false;
-
-  tries = 0;
-  while (true) {
-    if (sendDISCONNECT()) {
-      break;
-    }
-    if (++tries == 3) {
-      goto exit;
-    }
-  }
-
+void MQTT::cleanUp() {
   if (receiveHandle) {
     vTaskDelete(receiveHandle);
     receiveHandle = 0;
@@ -571,9 +560,21 @@ bool MQTT::disconnect() {
   }
 
   wifiClient.stop();
+}
 
-  result = true;
+void MQTT::disconnect() {
+  int tries;
 
-exit:
-  return result;
+  tries = 0;
+  while (true) {
+    if (sendDISCONNECT()) {
+      break;
+    }
+    if (++tries == 3) {
+      log("Falied to send DISCONNECT, cleaning up anyway");
+      break;
+    }
+  }
+
+  cleanUp();
 }

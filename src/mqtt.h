@@ -2,14 +2,20 @@
 
 #include <WiFiClient.h>
 
-typedef void(MqttCallback)(byte *pTopic, int topicLength, byte *pPayload, int payloadLength);
+enum MqttError {
+  NO_PING_RESPONSE
+};
+
+typedef void(MessageCallback)(byte *pTopic, int topicLength, byte *pPayload, int payloadLength);
+typedef void(ErrorCallback)(MqttError);
 
 class MQTT {
  private:
   bool debug;
   WiFiClient wifiClient;
   SemaphoreHandle_t brokerMutex;
-  MqttCallback *pCallback;
+  MessageCallback *pMessageCallback;
+  ErrorCallback *pErrorCallback;
 
   bool sendPacket(byte *, int);
   void log(const char *pformat, ...);
@@ -27,6 +33,7 @@ class MQTT {
   bool sendPUBACK(int id);
 
   bool sendDISCONNECT();
+  void cleanUp();
 
   bool sendPING();
   bool awaitPINGRESP();
@@ -47,6 +54,7 @@ class MQTT {
   bool connect(char *pserver, int port, char *pclient, int keepalive = 60);
   bool publish(char *ptopic, char *pmessage, bool retain = false);
   bool subscribe(char *ptopic);
-  bool disconnect();
-  void setCallback(MqttCallback *pcallback) { pCallback = pcallback; }
+  void disconnect();
+  void setMessageCallback(MessageCallback *pcallback) { pMessageCallback = pcallback; }
+  void setErrorCallback(ErrorCallback *pcallback) { pErrorCallback = pcallback; }
 };
